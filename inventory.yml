@@ -1,0 +1,13 @@
+all:
+  vars:
+    ansible_user: ansible
+  children:
+    wings:
+      hosts:
+        1.1.1.1:
+      vars:
+        wings_version: 1.2.6 # Only works for binary
+        installed_method: binary # binary or package_managed
+        container_runtime: docker # unused atm
+        rootless: true # if the ansible account is root then set to false
+        wings_debug: true # prints wings version after install to check if successful

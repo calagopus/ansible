@@ -1,0 +1,100 @@
+- hosts: wings
+  become: yes
+
+  tasks:
+    - name: Update wings in binary mode
+      when: installed_method == "binary"
+      block:
+        - name: using rootless
+          when: rootless == true
+          block:
+            - name: Stop the wings service (rootless)
+              command: sudo systemctl stop wings
+
+            - name: Retrieve new wings binary (rootless)
+              get_url:
+                url: "https://github.com/calagopus/wings/releases/download/release-{{ wings_version }}/wings-rs-{{ ansible_facts['architecture'] }}-linux"
+                dest: /usr/local/bin/wings
+                mode: "0755"
+                force: true
+
+            - name: Get wings version
+              command: wings --version
+              register: wings_installed_version
+              when: wings_debug == true
+
+            - name: Print wings version
+              debug:
+                msg: "Wings version is {{ wings_installed_version.stdout }}"
+              when: wings_debug == true
+
+            - name: Start the wings service (rootless)
+              command: sudo systemctl start wings
+
+        - name: using root
+          when: rootless == false
+          block:
+            - name: Stop the wings service (with root)
+              command: systemctl stop wings
+
+            - name: Retrieve new wings binary (with root)
+              get_url:
+                url: "https://github.com/calagopus/wings/releases/download/release-{{ wings_version }}/wings-rs-{{ ansible_facts['architecture'] }}-linux"
+                dest: /usr/local/bin/wings
+                mode: "0755"
+                force: true
+
+            - name: Get wings version
+              command: wings --version
+              register: wings_installed_version
+              when: wings_debug == true
+
+            - name: Print wings version
+              debug:
+                msg: "Wings version is {{ wings_installed_version.stdout }}"
+              when: wings_debug == true
+
+            - name: Start the wings service (with root)
+              command: systemctl start wings
+
+    - name: Update wings in package manager mode
+      when: installed_method == "package_managed"
+      block:
+        - name: Update calagopus-wings on Debian/Ubuntu
+          when: ansible_facts["os_family"] == "Debian"
+          block:
+            - name: apt update
+              apt:
+                update_cache: true
+
+            - name: Upgrade calagopus-wings (only upgrade calagopus-wings)
+              apt:
+                name: calagopus-wings
+                state: latest
+                only_upgrade: true
+
+        - name: Update calagopus-wings on RHEL/Fedora
+          when: ansible_facts["os_family"] == "RedHat"
+          dnf:
+            name: calagopus-wings
+            state: latest
+
+        - name: Update calagopus-wings on Alpine
+          when: ansible_facts["os_family"] == "Alpine"
+          block:
+            - name: apk update
+              community.general.apk:
+                update_cache: true
+
+            - name: apk upgrade calagopus-wings
+              community.general.apk:
+                name: calagopus-wings
+                state: latest
+
+        - name: Restart wings service (rootless)
+          command: sudo systemctl restart wings
+          when: rootless == true
+
+        - name: Restart wings service (with root)
+          command: systemctl restart wings
+          when: rootless == false
