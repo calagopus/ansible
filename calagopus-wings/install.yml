@@ -1,0 +1,84 @@
+- hosts: wings
+  become: yes
+
+  tasks:
+    - name: Install prerequisites
+      block:
+        - name: Ensure curl is installed
+          ansible.builtin.apt:
+            name: curl
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Install docker
+          when: container_runtime == "docker"
+          block:
+            - name: Check if Docker is already installed
+              ansible.builtin.command: docker --version
+              register: docker_check
+              changed_when: false
+              failed_when: false
+
+            - name: Install Docker using the convenience script
+              ansible.builtin.shell: |
+                set -o pipefail
+                curl -sSL https://get.docker.com/ | CHANNEL=stable bash
+              args:
+                executable: /bin/bash
+              when: docker_check.rc != 0
+
+            - name: Ensure Docker service is enabled and running
+              ansible.builtin.service:
+                name: docker
+                state: started
+                enabled: true
+
+            - name: Add user to the docker group
+              when: rootless == true
+              ansible.builtin.user:
+                name: "{{ ansible_user }}"
+                groups: docker
+                append: true
+
+    - name: Install wings in binary mode
+      when: installed_method == "binary"
+      block:
+        - name: Retrieve new wings binary
+          get_url:
+            url: "https://github.com/calagopus/wings/releases/download/release-{{ wings_version }}/wings-rs-{{ ansible_facts['architecture'] }}-linux"
+            dest: /usr/local/bin/wings
+            mode: "0755"
+            force: true
+
+        - name: Get wings version
+          command: wings --version
+          register: wings_installed_version
+          when: wings_debug == true
+
+        - name: Print wings version
+          debug:
+            msg: "Wings version is {{ wings_installed_version.stdout }}"
+          when: wings_debug == true
+
+        - name: Install wings as a service
+          command: sudo wings service-install
+
+        - name: Status of the wings service
+          service:
+            name: wings
+            state: started
+            enabled: true
+
+        - name: Configure wings (rootless)
+          command: sudo wings configure --join-data {{ wings_join_data }}
+          when: rootless == true
+
+        - name: Configure wings (with root)
+          command: wings configure --join-data {{ wings_join_data }}
+          when: rootless == false
+
+        - name: Restart wings service to apply config
+          service:
+            name: wings
+            state: restarted
