@@ -72,11 +72,15 @@
 
         - name: Configure wings (rootless)
           command: sudo wings configure --join-data {{ wings_join_data }}
-          when: rootless == true
+          when:
+            - rootless == true
+            - wings_join_data is defined
 
         - name: Configure wings (with root)
           command: wings configure --join-data {{ wings_join_data }}
-          when: rootless == false
+          when:
+            - rootless == false
+            - wings_join_data is defined
 
         - name: Restart wings service to apply config
           service:
