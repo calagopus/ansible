@@ -4,32 +4,60 @@
   tasks:
     - name: Install prerequisites
       block:
-        - name: Ensure curl is installed
-          ansible.builtin.apt:
-            name: curl
+        - name: Ensure curl and python3-debian is installed (Debian/Ubuntu)
+          apt:
+            name:
+              - curl
+              - python3-debian
             state: present
             update_cache: true
             cache_valid_time: 3600
+          when: ansible_facts['os_family'] == "Debian"
+
+        - name: Ensure curl is installed (Fedora/RedHat)
+          dnf:
+            name: curl
+            state: present
+          when: ansible_facts['os_family'] == "RedHat"
+
+        - name: Ensure curl and bash are installed (Alpine)
+          community.general.apk:
+            name:
+              - curl
+              - bash
+            state: present
+            update_cache: true
+          when: ansible_facts['os_family'] == "Alpine"
 
         - name: Install docker
           when: container_runtime == "docker"
           block:
             - name: Check if Docker is already installed
-              ansible.builtin.command: docker --version
+              command: docker --version
               register: docker_check
               changed_when: false
               failed_when: false
 
             - name: Install Docker using the convenience script
-              ansible.builtin.shell: |
+              shell: |
                 set -o pipefail
                 curl -sSL https://get.docker.com/ | CHANNEL=stable bash
               args:
                 executable: /bin/bash
-              when: docker_check.rc != 0
+              when:
+                - docker_check.rc != 0
+                - ansible_facts['os_family'] in ["Debian", "RedHat"]
+
+            - name: Install Docker from Alpine repos
+              community.general.apk:
+                name: docker
+                state: present
+              when:
+                - docker_check.rc != 0
+                - ansible_facts['os_family'] == "Alpine"
 
             - name: Ensure Docker service is enabled and running
-              ansible.builtin.service:
+              service:
                 name: docker
                 state: started
                 enabled: true
@@ -91,3 +119,128 @@
           service:
             name: wings
             state: restarted
+
+    - name: Install wings via package manager
+      when: installed_method == "package_managed"
+      block:
+        - name: Install calagopus repo on RHEL based distros
+          when: ansible_facts['os_family'] == "RedHat"
+          block:
+            - name: Import Calagopus GPG key
+              rpm_key:
+                key: https://packages.calagopus.com/pubring.gpg
+                state: present
+
+            - name: Add Calagopus repo
+              yum_repository:
+                name: calagopus
+                description: Calagopus Repository
+                baseurl: https://packages.calagopus.com/rpm
+                enabled: true
+                gpgcheck: true
+                gpgkey: https://packages.calagopus.com/pubring.gpg
+
+            - name: Install wings
+              dnf:
+                name: calagopus-wings
+                state: present
+                update_cache: true
+
+        - name: Install calagopus repo on Debian based distros
+          when: ansible_facts['os_family'] == "Debian"
+          block:
+            - name: Download Calagopus GPG key
+              get_url:
+                url: https://packages.calagopus.com/pub.gpg
+                dest: /usr/share/keyrings/calagopus-archive-keyring.gpg
+                mode: "0644"
+
+            - name: Add Calagopus apt repo
+              deb822_repository:
+                name: calagopus
+                types: deb
+                uris: https://packages.calagopus.com/deb
+                suites: stable
+                components: main
+                signed_by: https://packages.calagopus.com/pub.gpg
+                state: present
+
+            - name: Update apt cache
+              apt:
+                update_cache: true
+
+            - name: Install wings
+              apt:
+                name: calagopus-wings
+                state: present
+                update_cache: true
+
+        - name: Install calagopus repo on Debian based distros
+          when: ansible_facts['os_family'] == "Alpine"
+          block:
+            - name: Download Calagopus signing key
+              get_url:
+                url: https://packages.calagopus.com/apk/calagopus.rsa.pub
+                dest: /etc/apk/keys/calagopus.rsa.pub
+                mode: "0644"
+
+            - name: Add Calagopus apk repo
+              lineinfile:
+                path: /etc/apk/repositories
+                line: https://packages.calagopus.com/apk
+                state: present
+              register: calagopus_repo
+
+            - name: Update apk index
+              community.general.apk:
+                update_cache: true
+              when: calagopus_repo is changed
+
+            - name: Install wings
+              community.general.apk:
+                name: calagopus-wings
+                state: present
+                update_cache: true
+
+        - name: Configuring calagopus
+          block:
+            - name: Get wings version
+              command: calagopus-wings --version
+              register: wings_installed_version
+              when: wings_debug == true
+
+            - name: Print wings version
+              debug:
+                msg: "Wings version is {{ wings_installed_version.stdout }}"
+              when: wings_debug == true
+
+            - name: Install wings as a service (rootless)
+              command: sudo calagopus-wings service-install
+              when: rootless == true
+
+            - name: Install wings as a service (with root)
+              command: calagopus-wings service-install
+              when: rootless == false
+
+            - name: Status of the wings service
+              service:
+                name: wings
+                state: started
+                enabled: true
+
+            - name: Configure wings (rootless)
+              command: sudo calagopus-wings configure --join-data {{ wings_join_data }}
+              when:
+                - rootless == true
+                - wings_join_data is defined
+
+            - name: Configure wings (with root)
+              command: calagopus-wings configure --join-data {{ wings_join_data }}
+              when:
+                - rootless == false
+                - wings_join_data is defined
+
+            - name: Restart wings service to apply config
+              service:
+                name: wings
+                state: restarted
