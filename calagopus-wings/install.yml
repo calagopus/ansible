@@ -61,8 +61,13 @@
             msg: "Wings version is {{ wings_installed_version.stdout }}"
           when: wings_debug == true
 
-        - name: Install wings as a service
+        - name: Install wings as a service (rootless)
           command: sudo wings service-install
+          when: rootless == true
+
+        - name: Install wings as a service (with root)
+          command: wings service-install
+          when: rootless == false
 
         - name: Status of the wings service
           service:
